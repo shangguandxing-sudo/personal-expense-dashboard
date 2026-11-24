@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#102e29">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <link rel="stylesheet" href="vendor/air-datepicker.css">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <link rel="manifest" href="manifest.json">
+  <title>支出账本</title>
+  <script defer src="vendor/zip.min.js"></script>
+  <script defer src="vendor/xlsx.full.min.js"></script>
+  <script defer src="vendor/air-datepicker.js"></script>
+  <script type="module" src="app.mjs"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="frame top-inner">
+      <a href="#" class="brand"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>支出账本</a>
+      <nav aria-label="主导航"><a href="#overview">概览</a><a href="#annual" id="annual-link" hidden>月账单</a><a href="#details">交易明细</a></nav>
+      <button class="button primary" id="import-button" type="button">批量导入</button>
+      <input id="files" type="file" multiple accept=".csv,.txt,.xls,.xlsx,.zip" hidden>
+    </div>
+  </header>
+  <main class="frame" id="overview">
+    <div class="heading">
+      <div><p class="context" id="ledger-type">本机账本</p><h1>支出看板</h1></div>
+      <span class="local" id="coverage">账单保存在此浏览器</span>
+    </div>
+    <div class="demo" id="demo-bar" hidden>
+      <span><strong>示例账本</strong>　这里的商品与金额用于演示</span>
+      <button type="button" id="hide-demo">关闭示例</button>
+    </div>
+    <div class="demo" id="empty-ledger" hidden>
+      <span><strong>当前浏览器暂无账单</strong>　导入后可查看实际商品与支付来源</span>
+      <button type="button" id="show-demo">查看示例</button>
+    </div>
+    <p id="import-notice" class="notice" role="status" hidden></p>
+    <form class="filters" id="filters">
+      <div class="period-filter">
+        <span id="period-label">时间范围</span>
+        <button id="period-button" type="button" aria-haspopup="dialog" aria-controls="period-dialog" aria-labelledby="period-label period-value"><strong id="period-value">全部时间</strong></button>
+      </div>
+      <label>统计口径<select id="spending-metric">
+        <option value="net" selected>净支出</option>
+        <option value="expense">消费金额</option>
+      </select></label>
+      <label>退款记录<select id="refund-view">
+        <option value="all" selected>显示全部</option>
+        <option value="hide-full">隐藏全额退款</option>
+      </select></label>
+      <label>支付渠道<select id="payment-source"></select></label>
+      <label>平台<select id="platform"></select></label>
+      <label>品牌／商户<select id="brand"></select></label>
+      <label>消费类别<select id="category"></select></label>
+      <button id="reset" type="button" class="button secondary">清除筛选</button>
+    </form>
+    <section class="metrics metric-summary" aria-label="支出概览">
+      <div class="metric hero">
+        <p id="metric-label">净支出</p><div class="total" id="net">¥0.00</div>
+        <p id="period-caption"></p><div class="rings" aria-hidden="true"></div>
+      </div>
+      <details class="metric-explanation">
+        <summary>查看消费与退款合计</summary>
+        <div class="metric-support">
+          <div class="metric"><p>消费支出</p><strong id="spent">¥0.00</strong><small id="out-count"></small></div>
+          <div class="metric"><p>到账退款</p><strong id="refund">¥0.00</strong><small id="refund-count"></small></div>
+        </div>
+      </details>
+    </section>
+    <div class="charts">
+      <section class="card trend-card"><div class="card-title"><h2 id="trend-title">净支出折线</h2><span id="trend-scope"></span></div>
+        <div class="trend-toolbar">
+          <div class="trend-granularity" id="trend-granularity" role="group" aria-label="折线图时间粒度">
+            <button type="button" data-grain="auto" aria-pressed="true">自动</button>
+            <button type="button" data-grain="day" aria-pressed="false">日</button>
+            <button type="button" data-grain="week" aria-pressed="false">周</button>
+            <button type="button" data-grain="month" aria-pressed="false">月</button>
+            <button type="button" data-grain="quarter" aria-pressed="false">季度</button>
+            <button type="button" data-grain="year" aria-pressed="false">年</button>
+          </div>
+          <p class="trend-grain-label" id="trend-grain-label" aria-live="polite"></p>
+        </div>
+        <div id="trend"></div>
+      </section>
+      <section class="card">
+        <div class="card-title">
+          <h2 id="spending-breakdown-title">平台支出</h2>
+          <label class="spending-dimension"><span class="visually-hidden">支出统计维度</span>
+            <select id="spending-dimension">
+              <option value="platform">按平台</option>
+              <option value="brand">按品牌／商户</option>
+            </select>
+          </label>
+        </div>
+        <div id="platform-statistics"></div>
+      </section>
+      <section class="card"><div class="card-title"><h2>支出构成</h2><span>点类别查看逐笔消费</span></div><div id="categories"></div></section>
+    </div>
+    <section class="card annual" id="annual" hidden>
+      <div class="card-title"><h2 id="annual-title">月度账单</h2><span>选月份查看逐笔交易</span></div>
+      <div id="annual-grid" class="annual-grid"></div>
+    </section>
+    <section class="card details" id="details" tabindex="-1">
+      <div class="card-title detail-title">
+        <div><h2>逐笔交易</h2><span id="row-count"></span></div>
+        <div class="detail-controls">
+          <label class="search"><span class="visually-hidden">搜索交易</span><input id="search" type="search" placeholder="搜索商品、商家或订单号"></label>
+          <label class="transaction-sort"><span class="visually-hidden">交易排序</span>
+            <select id="transaction-sort">
+              <option value="recent">最近交易</option>
+              <option value="high">金额从高到低</option>
+              <option value="low">金额从低到高</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <p id="detail-scope" class="detail-scope"></p>
+      <div class="transaction-list-controls">
+        <label id="missing-filter" class="check-filter" hidden><input id="only-missing" type="checkbox"> 仅看商品名待补</label>
+        <button class="amount-sort" id="amount-sort" type="button" aria-label="按金额从高到低排序">
+          金额 <span id="amount-sort-direction" aria-hidden="true">↕</span>
+        </button>
+      </div>
+      <div class="transaction-scroll" id="transaction-scroll" tabindex="0" role="region" aria-label="可滚动的逐笔交易">
+        <div class="transaction-list" id="transactions"></div>
+        <p id="empty" class="empty" hidden>暂无符合条件的交易</p>
+      </div>
+    </section>
+    <details class="help">
+      <summary>可导入哪些账单？</summary>
+      <p>支持支付宝、微信支付的个人对账账单，及含日期、金额、收支类型的银行消费明细。可以同时选择 CSV、TXT、Excel 和 ZIP。浏览器会识别交易类型，格式无法识别时会提示。</p>
+      <p>淘宝、拼多多、美团订单表支持在含日期、订单号和商品名时补充已有付款记录的商品信息。匹配需要相同订单号或唯一的同日同金额交易。</p>
+    </details>
+  </main>
+  <dialog id="period-dialog" aria-labelledby="period-title">
+    <form id="period-form" novalidate>
+      <h2 id="period-title">时间范围</h2>
+      <div class="period-modes" id="period-modes" role="group" aria-label="范围类型">
+        <button type="button" data-mode="all">全部</button>
+        <button type="button" data-mode="year">年度</button>
+        <button type="button" data-mode="quarter">季度</button>
+        <button type="button" data-mode="month">月份</button>
+        <button type="button" data-mode="custom">自定义</button>
+      </div>
+      <div class="period-fields" id="period-presets" hidden>
+        <label>年份<select id="period-year"></select></label>
+        <label id="period-unit-field"><span id="period-unit-label"></span><select id="period-unit"></select></label>
+      </div>
+      <div id="period-custom" hidden>
+        <div class="period-fields">
+          <label>开始日期<input id="period-start" type="date" required></label>
+          <label>结束日期<input id="period-end" type="date" required></label>
+        </div>
+        <div id="range-calendar"></div>
+      </div>
+      <p class="period-preview" id="period-preview" aria-live="polite" hidden></p>
+      <p class="period-error" id="period-error" role="alert" hidden></p>
+      <div class="actions">
+        <button type="button" class="button secondary" id="period-cancel">取消</button>
+        <button type="submit" class="button primary" id="period-apply">应用</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="password-dialog">
+    <form method="dialog">
+      <h2>输入账单解压密码</h2><p id="password-file"></p>
+      <label>解压密码<input id="password" type="password" autocomplete="off"></label>
+      <div class="actions"><button value="skip" class="button secondary">跳过</button><button value="confirm" class="button primary">解压</button></div>
+    </form>
+  </dialog>
+  <dialog id="transaction-dialog">
+    <div class="transaction-heading">
+      <div><p id="transaction-evidence" class="evidence"></p><h2 id="transaction-title"></h2></div>
+      <strong id="transaction-amount"></strong>
+    </div>
+    <div id="transaction-facts" class="facts"></div>
+    <div id="transaction-products" class="products" hidden></div>
+    <form method="dialog" class="actions"><button class="button primary">关闭</button></form>
+  </dialog>
+  <dialog id="edit-dialog">
+    <form method="dialog">
+      <h2>编辑分类</h2><p id="edit-title"></p>
+      <label>消费类别<select id="edit-category"></select></label>
+      <label>细分类<input id="edit-detail" maxlength="32" placeholder="例如：日用品"></label>
+      <div class="actions"><button value="cancel" class="button secondary">取消</button><button value="save" class="button primary">保存</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
